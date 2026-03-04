@@ -5,7 +5,7 @@ A Grok-powered bot that joins Google Meet meetings, transcribes the audio in rea
 ## How It Works
 
 1. **Watches your calendar** — Polls Google Calendar for upcoming meetings with Meet links (or accepts a manual URL)
-2. **Joins the meeting** — Uses Selenium browser automation to open a headless Chrome instance and join the Google Meet call as a guest
+2. **Joins the meeting** — Uses Selenium browser automation to open a headless Chrome instance and join the Google Meet call as a guest. Overlapping meetings are handled concurrently — each meeting runs in its own thread with a separate browser instance
 3. **Captures audio** — Records system audio via PulseAudio (or microphone in local mode) and transcribes it in chunks using Google's Speech Recognition API
 4. **Generates notes** — Sends the full transcript to Grok (via the xAI SDK) which produces structured meeting notes with summaries, action items, decisions, and open questions
 5. **Emails attendees** — Sends the formatted notes (and optionally the raw transcript) to all meeting attendees via SMTP
@@ -179,4 +179,4 @@ email_sender.py      — SMTP email delivery with HTML formatting
 - System audio capture requires PulseAudio on Linux
 - Google may show CAPTCHAs for automated joins from the same IP
 - Meeting host must admit the bot if the meeting has a waiting room
-- Calendar watch mode processes meetings sequentially (one at a time)
+- Calendar watch mode runs meetings concurrently — ensure your system has enough resources for multiple Chrome instances if you have back-to-back or overlapping meetings

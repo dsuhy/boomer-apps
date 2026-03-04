@@ -13,6 +13,7 @@ import logging
 import os
 import signal
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -155,6 +156,7 @@ def run_live_session(
     args: argparse.Namespace,
     attendee_emails: list[str] | None = None,
     meeting_title: str = "Meeting",
+    stop_event: threading.Event | None = None,
 ) -> None:
     """Join a meeting, transcribe, and generate notes.
 
@@ -163,10 +165,17 @@ def run_live_session(
         args: Parsed CLI arguments.
         attendee_emails: Emails from the calendar event (for --watch mode).
         meeting_title: Title from the calendar event.
+        stop_event: Optional threading.Event to signal this session to stop.
+                    Used in watch mode so Ctrl+C can stop all sessions.
     """
     if "meet.google.com" not in meeting_url:
         logger.error("URL doesn't look like a Google Meet link: %s", meeting_url)
         return
+
+    if stop_event is None:
+        stop_event = threading.Event()
+
+    session_label = f"[{meeting_title}]"
 
     # Set up the transcriber
     if args.mic_mode:
@@ -176,36 +185,25 @@ def run_live_session(
 
     bot = MeetBot(meeting_url=meeting_url, display_name=args.name)
 
-    stop_requested = False
-
-    def signal_handler(sig, frame):
-        nonlocal stop_requested
-        if stop_requested:
-            logger.info("Force quitting...")
-            sys.exit(1)
-        stop_requested = True
-        logger.info("\nStopping... press Ctrl+C again to force quit")
-
-    signal.signal(signal.SIGINT, signal_handler)
-
     try:
+        logger.info("%s Joining %s", session_label, meeting_url)
         bot.join()
 
         if not bot.wait_for_admission(timeout=args.admit_timeout):
             logger.warning(
-                "Was not admitted to the meeting within %ds. "
-                "Proceeding anyway (may be in waiting room).",
+                "%s Was not admitted within %ds. Proceeding anyway.",
+                session_label,
                 args.admit_timeout,
             )
 
         transcriber.start()
-        logger.info("Recording and transcribing... Press Ctrl+C to stop.")
+        logger.info("%s Recording and transcribing...", session_label)
 
-        while not stop_requested:
+        while not stop_event.is_set():
             if not bot.is_in_meeting():
                 time.sleep(5)
                 if not bot.is_in_meeting():
-                    logger.info("Meeting appears to have ended")
+                    logger.info("%s Meeting appears to have ended", session_label)
                     break
             time.sleep(3)
 
@@ -215,26 +213,26 @@ def run_live_session(
         bot.leave()
 
         if not transcript.strip():
-            logger.warning("No transcript was captured. Nothing to summarize.")
+            logger.warning("%s No transcript captured.", session_label)
             return
 
         # Save raw transcript
         transcript_path = f"transcript_{int(time.time())}.txt"
         Path(transcript_path).write_text(transcript)
-        logger.info("Raw transcript saved to %s", transcript_path)
+        logger.info("%s Raw transcript saved to %s", session_label, transcript_path)
 
         if args.transcript_only:
-            logger.info("Transcript-only mode — skipping note generation.")
+            logger.info("%s Transcript-only mode — skipping notes.", session_label)
             return
 
         # Generate notes with Grok
-        logger.info("Generating meeting notes with Grok...")
+        logger.info("%s Generating meeting notes with Grok...", session_label)
         note_taker = GrokNoteTaker(model=args.model)
-        notes = note_taker.summarize_streaming(transcript)
+        notes = note_taker.summarize(transcript)
 
         output_path = args.output or f"meeting_notes_{int(time.time())}.md"
         Path(output_path).write_text(notes)
-        logger.info("Meeting notes saved to %s", output_path)
+        logger.info("%s Meeting notes saved to %s", session_label, output_path)
 
         # Email notes to attendees
         if args.email or args.email_to:
@@ -278,10 +276,14 @@ def _send_notes_email(
 
 
 def run_watch_mode(args: argparse.Namespace) -> None:
-    """Watch Google Calendar and auto-join meetings as they start."""
+    """Watch Google Calendar and auto-join meetings concurrently.
+
+    Each meeting runs in its own thread so overlapping meetings are
+    handled simultaneously. Ctrl+C signals all active sessions to stop.
+    """
     from calendar_watcher import CalendarScheduler
 
-    logger.info("Starting calendar watch mode")
+    logger.info("Starting calendar watch mode (concurrent)")
     logger.info(
         "Will poll every %ds, join %dm before start, look %dm ahead",
         args.poll_interval,
@@ -295,12 +297,40 @@ def run_watch_mode(args: argparse.Namespace) -> None:
         lookahead_minutes=args.lookahead,
     )
 
-    for meeting in scheduler.watch():
+    # Tracks all active meeting threads and their stop events
+    active_sessions: list[tuple[threading.Thread, threading.Event, str]] = []
+    global_stop = threading.Event()
+
+    def signal_handler(sig, frame):
+        if global_stop.is_set():
+            logger.info("Force quitting...")
+            sys.exit(1)
         logger.info(
-            "Auto-joining: '%s' at %s (%d attendees)",
+            "\nStopping %d active session(s)... press Ctrl+C again to force quit",
+            sum(1 for t, _, _ in active_sessions if t.is_alive()),
+        )
+        global_stop.set()
+        # Signal each individual session to stop
+        for _, stop_event, _ in active_sessions:
+            stop_event.set()
+
+    signal.signal(signal.SIGINT, signal_handler)
+
+    for meeting in scheduler.watch():
+        if global_stop.is_set():
+            break
+
+        # Clean up finished threads
+        active_sessions = [
+            (t, e, name) for t, e, name in active_sessions if t.is_alive()
+        ]
+
+        logger.info(
+            "Auto-joining: '%s' at %s (%d attendees) [%d other session(s) active]",
             meeting.title,
             meeting.meet_url,
             len(meeting.attendee_emails),
+            len(active_sessions),
         )
 
         # Include organizer in the email list
@@ -308,14 +338,27 @@ def run_watch_mode(args: argparse.Namespace) -> None:
             meeting.attendee_emails + [meeting.organizer_email]
         ))
 
-        run_live_session(
-            meeting_url=meeting.meet_url,
-            args=args,
-            attendee_emails=all_emails,
-            meeting_title=meeting.title,
-        )
+        stop_event = threading.Event()
 
-        logger.info("Finished processing '%s' — resuming calendar watch", meeting.title)
+        thread = threading.Thread(
+            target=run_live_session,
+            kwargs={
+                "meeting_url": meeting.meet_url,
+                "args": args,
+                "attendee_emails": all_emails,
+                "meeting_title": meeting.title,
+                "stop_event": stop_event,
+            },
+            name=f"meeting-{meeting.event_id}",
+            daemon=True,
+        )
+        thread.start()
+        active_sessions.append((thread, stop_event, meeting.title))
+
+    # Wait for all active sessions to finish before exiting
+    for thread, _, title in active_sessions:
+        logger.info("Waiting for '%s' to finish...", title)
+        thread.join()
 
 
 def main() -> None:
@@ -340,10 +383,23 @@ def main() -> None:
                 "Run with --help for usage."
             )
             sys.exit(1)
+
+        stop_event = threading.Event()
+
+        def signal_handler(sig, frame):
+            if stop_event.is_set():
+                logger.info("Force quitting...")
+                sys.exit(1)
+            stop_event.set()
+            logger.info("\nStopping... press Ctrl+C again to force quit")
+
+        signal.signal(signal.SIGINT, signal_handler)
+
         run_live_session(
             meeting_url=args.meeting_url,
             args=args,
             meeting_title="Meeting",
+            stop_event=stop_event,
         )
 
 
