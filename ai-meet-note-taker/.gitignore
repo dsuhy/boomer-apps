@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+venv/
+.env
+transcript_*.txt
+meeting_notes_*.md

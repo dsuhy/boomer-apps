@@ -1,0 +1,7 @@
+xai-sdk>=1.7.0
+selenium>=4.15.0
+webdriver-manager>=4.0.0
+SpeechRecognition>=3.10.0
+pyaudio>=0.2.14
+pydub>=0.25.1
+python-dotenv>=1.0.0
