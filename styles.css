@@ -44,10 +44,10 @@ img { max-width: 100%; display: block; }
   height: 64px;
 }
 
-.logo { display: flex; align-items: center; }
-.logo img { height: 36px; width: auto; }
+.logo { display: flex; align-items: center; flex-shrink: 0; }
+.logo img { height: 34px; width: auto; display: block; }
 
-.footer-logo-img { height: 32px; width: auto; margin-bottom: 6px; }
+.footer-logo-img { height: 30px; width: auto; margin-bottom: 6px; display: block; }
 
 .nav-links { display: flex; align-items: center; gap: 28px; }
 .nav-links a { font-size: 0.88rem; color: var(--ink2); transition: color 0.2s; }
