@@ -44,10 +44,22 @@ img { max-width: 100%; display: block; }
   height: 64px;
 }
 
-.logo { display: flex; align-items: center; flex-shrink: 0; }
-.logo img { height: 34px; width: auto; display: block; }
+.logo { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.logo img { height: 28px; width: auto; display: block; }
 
-.footer-logo-img { height: 30px; width: auto; margin-bottom: 6px; display: block; }
+.logo-text {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  line-height: 1.25;
+  color: var(--ink);
+}
+
+.footer-logo {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
+}
+.footer-logo img { height: 24px; width: auto; }
 
 .nav-links { display: flex; align-items: center; gap: 28px; }
 .nav-links a { font-size: 0.88rem; color: var(--ink2); transition: color 0.2s; }
