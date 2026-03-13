@@ -44,11 +44,10 @@ img { max-width: 100%; display: block; }
   height: 64px;
 }
 
-.logo {
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 1.4rem; font-weight: 700; letter-spacing: -0.5px;
-}
-.logo span { color: var(--pop); background: var(--ink); padding: 0 2px; border-radius: 3px; }
+.logo { display: flex; align-items: center; }
+.logo img { height: 36px; width: auto; }
+
+.footer-logo-img { height: 32px; width: auto; margin-bottom: 6px; }
 
 .nav-links { display: flex; align-items: center; gap: 28px; }
 .nav-links a { font-size: 0.88rem; color: var(--ink2); transition: color 0.2s; }
